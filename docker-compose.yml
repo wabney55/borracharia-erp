@@ -1,0 +1,64 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: borracharia
+      POSTGRES_USER: borracharia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+      TZ: America/Cuiaba
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U borracharia -d borracharia"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [erp]
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://borracharia:${POSTGRES_PASSWORD}@db:5432/borracharia?schema=public
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?Defina INITIAL_ADMIN_PASSWORD no .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Defina SESSION_SECRET no .env}
+      NODE_ENV: production
+      TZ: America/Cuiaba
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "-c", "npx prisma migrate deploy && node --import tsx prisma/seed.ts && node server.js"]
+    networks: [erp]
+
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: borracharia
+      PGUSER: borracharia
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      TZ: America/Cuiaba
+    volumes:
+      - type: bind
+        source: ${BACKUP_DIR:?Aponte BACKUP_DIR para outro disco ou dispositivo}
+        target: /backups
+      - ./infra/backup/backup.sh:/usr/local/bin/backup.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["sh", "/usr/local/bin/backup.sh", "loop"]
+    networks: [erp]
+
+volumes:
+  postgres_data:
+
+networks:
+  erp:
+    driver: bridge
